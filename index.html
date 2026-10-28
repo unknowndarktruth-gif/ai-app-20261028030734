@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>CyberRacer 2099 - Neon Highway</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+body { background: #070913; color: #fff; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; touch-action: manipulation; }
+#gameWrapper { position: relative; width: 100vw; height: 100vh; max-width: 460px; max-height: 880px; background: #0a0d18; overflow: hidden; box-shadow: 0 0 60px rgba(6,182,212,0.25); border-left: 2px solid #06b6d4; border-right: 2px solid #ec4899; }
+canvas { display: block; width: 100%; height: 100%; background: #05070f; }
+#hud { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; z-index: 10; }
+.badge { background: rgba(15,23,42,0.85); backdrop-filter: blur(8px); border: 1px solid rgba(6,182,212,0.3); padding: 8px 14px; border-radius: 12px; font-weight: 800; font-size: 13px; letter-spacing: 1px; color: #38bdf8; text-shadow: 0 0 8px rgba(56,189,248,0.5); }
+.badge span { color: #f43f5e; font-size: 18px; margin-left: 4px; font-weight: 900; }
+#nitroBarWrap { position: absolute; top: 62px; left: 14px; right: 14px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; pointer-events: none; z-index: 10; }
+#nitroBar { width: 100%; height: 100%; background: linear-gradient(90deg, #ec4899, #06b6d4); transition: width 0.1s; }
+#overlay { position: absolute; inset: 0; background: rgba(5,7,15,0.92); backdrop-filter: blur(12px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; z-index: 20; }
+#overlay h1 { font-size: 34px; font-weight: 900; background: linear-gradient(135deg, #06b6d4, #ec4899, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 2px; }
+#overlay p { color: #94a3b8; font-size: 14px; margin-bottom: 24px; line-height: 1.6; max-width: 300px; }
+.play-btn { background: linear-gradient(135deg, #06b6d4, #3b82f6); color: #fff; border: none; padding: 14px 44px; font-size: 17px; font-weight: 900; border-radius: 50px; cursor: pointer; transition: 0.2s; box-shadow: 0 0 30px rgba(6,182,212,0.6); text-transform: uppercase; letter-spacing: 1.5px; }
+.play-btn:active { transform: scale(0.96); }
+#touchControls { position: absolute; bottom: 20px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; pointer-events: auto; z-index: 15; }
+.t-btn { width: 72px; height: 72px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 2px solid rgba(56,189,248,0.4); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; font-size: 26px; color: #fff; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
+.t-btn:active { background: rgba(56,189,248,0.4); transform: scale(0.95); }
+.nitro-btn { width: 90px; height: 55px; border-radius: 30px; background: linear-gradient(135deg, #ec4899, #f43f5e); border: 2px solid #fda4af; font-size: 13px; font-weight: 900; letter-spacing: 1px; box-shadow: 0 0 20px rgba(236,72,153,0.5); }
+</style>
+</head>
+<body>
+<div id="gameWrapper">
+    <canvas id="cv" width="400" height="700"></canvas>
+    <div id="hud">
+        <div class="badge">SCORE: <span id="scoreText">0</span></div>
+        <div class="badge">SPEED: <span id="speedText">90</span> <small style="font-size:10px;">KM/H</small></div>
+    </div>
+    <div id="nitroBarWrap"><div id="nitroBar"></div></div>
+    <div id="touchControls">
+        <div class="t-btn" id="lBtn">◀</div>
+        <div class="t-btn nitro-btn" id="nBtn">NITRO ⚡</div>
+        <div class="t-btn" id="rBtn">▶</div>
+    </div>
+    <div id="overlay">
+        <h1 id="mTitle">CYBER RACER 2099</h1>
+        <p id="mDesc">Neon Outrun Arcade Experience.<br>Dodge heavy cyber-traffic, trigger supersonic NITRO, and set the highest record!</p>
+        <button class="play-btn" id="startBtn">START ENGINE</button>
+    </div>
+</div>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let gameRunning = false, gameOver = false;
+let score = 0, speed = 8, nitro = 100, isNitro = false;
+let roadY = 0;
+let player = { x: 175, y: 540, w: 50, h: 90, color: '#06b6d4' };
+let obstacles = [];
+let particles = [];
+let keys = {};
+
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let actx = null;
+function playSound(type) {
+    try {
+        if (!actx) actx = new AudioCtx();
+        if (actx.state === 'suspended') actx.resume();
+        const osc = actx.createOscillator();
+        const gain = actx.createGain();
+        osc.connect(gain);
+        gain.connect(actx.destination);
+        const t = actx.currentTime;
+        if (type === 'engine') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(60 + (speed * 8), t);
+            gain.gain.setValueAtTime(0.04, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+            osc.start(t); osc.stop(t + 0.1);
+        } else if (type === 'nitro') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(200, t);
+            osc.frequency.exponentialRampToValueAtTime(600, t + 0.3);
+            gain.gain.setValueAtTime(0.12, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+            osc.start(t); osc.stop(t + 0.3);
+        } else if (type === 'crash') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(120, t);
+            osc.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+            gain.gain.setValueAtTime(0.3, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+            osc.start(t); osc.stop(t + 0.5);
+        }
+    } catch(e) {}
+}
+
+window.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ' || e.key === 'Shift') triggerNitro(true); });
+window.addEventListener('keyup', e => { keys[e.key] = false; if (e.key === ' ' || e.key === 'Shift') triggerNitro(false); });
+
+const bindBtn = (id, key) => {
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', e => { e.preventDefault(); keys[key] = true; });
+    el.addEventListener('touchend', e => { e.preventDefault(); keys[key] = false; });
+    el.addEventListener('mousedown', () => keys[key] = true);
+    el.addEventListener('mouseup', () => keys[key] = false);
+};
+bindBtn('lBtn', 'ArrowLeft');
+bindBtn('rBtn', 'ArrowRight');
+
+const nBtn = document.getElementById('nBtn');
+nBtn.addEventListener('touchstart', e => { e.preventDefault(); triggerNitro(true); });
+nBtn.addEventListener('touchend', e => { e.preventDefault(); triggerNitro(false); });
+nBtn.addEventListener('mousedown', () => triggerNitro(true));
+nBtn.addEventListener('mouseup', () => triggerNitro(false));
+
+function triggerNitro(on) {
+    if (on && nitro > 15) { isNitro = true; playSound('nitro'); }
+    else { isNitro = false; }
+}
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+
+function startGame() {
+    score = 0; speed = 8; nitro = 100; isNitro = false;
+    gameOver = false; gameRunning = true;
+    player.x = 175; obstacles = []; particles = [];
+    document.getElementById('overlay').style.display = 'none';
+    requestAnimationFrame(update);
+}
+
+function spawnCar() {
+    const lanes = [45, 130, 215, 305];
+    const lane = lanes[Math.floor(Math.random() * lanes.length)];
+    const colors = ['#f43f5e', '#ec4899', '#a855f7', '#fbbf24', '#10b981'];
+    obstacles.push({
+        x: lane, y: -120, w: 48, h: 86,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        speed: speed * (0.45 + Math.random() * 0.35)
+    });
+}
+setInterval(() => { if (gameRunning && !gameOver) spawnCar(); }, 1100);
+
+function drawCyberCar(car, isPlayer = false) {
+    ctx.shadowBlur = isPlayer ? (isNitro ? 25 : 15) : 8;
+    ctx.shadowColor = car.color;
+    ctx.fillStyle = car.color;
+    ctx.beginPath();
+    ctx.roundRect(car.x, car.y, car.w, car.h, 12);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.roundRect(car.x + 8, car.y + (isPlayer ? 22 : 44), car.w - 16, 22, 6);
+    ctx.fill();
+
+    ctx.fillStyle = isPlayer ? '#38bdf8' : '#fecdd3';
+    ctx.fillRect(car.x + 6, car.y + (isPlayer ? 4 : car.h - 8), 8, 5);
+    ctx.fillRect(car.x + car.w - 14, car.y + (isPlayer ? 4 : car.h - 8), 8, 5);
+
+    ctx.fillStyle = isPlayer ? '#f43f5e' : '#38bdf8';
+    ctx.fillRect(car.x + 6, car.y + (isPlayer ? car.h - 6 : 4), 10, 4);
+    ctx.fillRect(car.x + car.w - 16, car.y + (isPlayer ? car.h - 6 : 4), 10, 4);
+
+    if (isPlayer) {
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
+        ctx.beginPath();
+        ctx.moveTo(car.x + 4, car.y);
+        ctx.lineTo(car.x - 20, car.y - 140);
+        ctx.lineTo(car.x + car.w + 20, car.y - 140);
+        ctx.lineTo(car.x + car.w - 4, car.y);
+        ctx.fill();
+    }
+}
+
+function update() {
+    if (!gameRunning || gameOver) return;
+
+    const currentSpeed = isNitro ? speed * 1.85 : speed;
+    if (Math.random() < 0.2) playSound('engine');
+
+    if ((keys['ArrowLeft'] || keys['a']) && player.x > 35) player.x -= 7;
+    if ((keys['ArrowRight'] || keys['d']) && player.x < 315) player.x += 7;
+
+    if (isNitro) {
+        nitro = Math.max(0, nitro - 0.7);
+        if (nitro <= 0) isNitro = false;
+        particles.push({
+            x: player.x + (Math.random() > 0.5 ? 12 : player.w - 16),
+            y: player.y + player.h,
+            r: Math.random() * 5 + 3,
+            color: Math.random() > 0.5 ? '#ec4899' : '#38bdf8',
+            vy: Math.random() * 6 + 6
+        });
+    } else {
+        nitro = Math.min(100, nitro + 0.15);
+    }
+    document.getElementById('nitroBar').style.width = nitro + '%';
+
+    ctx.fillStyle = '#090d1a';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+
+    roadY = (roadY + currentSpeed) % 60;
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(25, 0, cv.width - 50, cv.height);
+
+    ctx.fillStyle = '#06b6d4';
+    ctx.fillRect(20, 0, 5, cv.height);
+    ctx.fillStyle = '#ec4899';
+    ctx.fillRect(cv.width - 25, 0, 5, cv.height);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    for (let lane = 1; lane <= 3; lane++) {
+        for (let y = -60 + roadY; y < cv.height; y += 60) {
+            ctx.fillRect(25 + lane * 88, y, 4, 30);
+        }
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        p.y += p.vy;
+        p.r *= 0.92;
+        if (p.r < 0.6) particles.splice(i, 1);
+    }
+
+    drawCyberCar(player, true);
+
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.y += currentSpeed - obs.speed;
+        drawCyberCar(obs);
+
+        if (player.x < obs.x + obs.w - 8 && player.x + player.w - 8 > obs.x &&
+            player.y < obs.y + obs.h - 8 && player.y + player.h - 8 > obs.y) {
+            playSound('crash');
+            endGame();
+            return;
+        }
+
+        if (obs.y > cv.height + 50) {
+            obstacles.splice(i, 1);
+            score += isNitro ? 25 : 10;
+            if (score % 60 === 0) speed += 0.4;
+            document.getElementById('scoreText').innerText = score;
+            document.getElementById('speedText').innerText = Math.round(currentSpeed * 12);
+        }
+    }
+
+    requestAnimationFrame(update);
+}
+
+function endGame() {
+    gameOver = true; gameRunning = false;
+    document.getElementById('mTitle').innerText = 'CRASHED!';
+    document.getElementById('mDesc').innerHTML = 'Highway run terminated.<br>Final Score: <b style="color:#38bdf8; font-size:22px;">' + score + '</b>';
+    document.getElementById('startBtn').innerText = 'RACE AGAIN';
+    document.getElementById('overlay').style.display = 'flex';
+}
+</script>
+</body>
+</html>
